@@ -102,7 +102,7 @@ wss.on('connection', function(ws) {
 
 		switch (message.id) {
 		case 'start':
-			start(sessionId, message.sdpOffer, function(error, type, data) {
+			start(sessionId, message.sdpOffer, message.dots, function(error, type, data) {
 				if (error) {
 					return ws.send(JSON.stringify({
 						id : 'error',
@@ -176,7 +176,7 @@ function getKurentoClient(callback) {
 	});
 }
 
-function start(sessionId, sdpOffer, callback) {
+function start(sessionId, sdpOffer, dots, callback) {
 
 	if (!sessionId) {
 		return callback("Cannot use undefined sessionId");
@@ -197,7 +197,7 @@ function start(sessionId, sdpOffer, callback) {
 				return callback(error);
 			}
 
-			createMediaElements(pipeline, function(error, webRtcEndpoint,
+			createMediaElements(pipeline, dots, function(error, webRtcEndpoint,
 					crowdDetector) {
 				if (error) {
 					pipeline.release();
@@ -239,31 +239,35 @@ function start(sessionId, sdpOffer, callback) {
 	});
 }
 
-function createMediaElements(pipeline, callback) {
+function createMediaElements(pipeline, dots, callback) {
 	pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
 		if (error) {
 			return callback(error);
 		}
 
-		var _roi = {		
-					'id' : 'roi1',
-					'points' : [{'x' : 0, 'y' : 0}, {'x' : 0.5, 'y' : 0}, {'x' : 0.5, 'y' : 0.5}, {'x' : 0, 'y' : 0.5}],
-					'regionOfInterestConfig' : {
-							'occupancyLevelMin' : 10,
-							'occupancyLevelMed' : 35,
-							'occupancyLevelMax' : 65,
-							'occupancyNumFramesToEvent' : 5,
-							'fluidityLevelMin' : 10,
-							'fluidityLevelMed' : 35,
-							'fluidityLevelMax' : 65,
-							'fluidityNumFramesToEvent' : 5,
-							'sendOpticalFlowEvent' : false,
-							'opticalFlowNumFramesToEvent' : 3,
-							'opticalFlowNumFramesToReset' : 3,
-							'opticalFlowAngleOffset' : 0
-							}
-					};
-		pipeline.create('CrowdDetectorFilter', {'rois' : [_roi]},
+		var ps = [];
+		for(var i=0; i<dots.length; i++){
+			ps.push({
+				'id': 'roi'+(i+1),
+				'points':dots[i],
+              			'regionOfInterestConfig' : {
+                    			'occupancyLevelMin' : 10,
+                    			'occupancyLevelMed' : 35,
+                    			'occupancyLevelMax' : 65,
+					'occupancyNumFramesToEvent' : 5,
+					'fluidityLevelMin' : 10,
+			                'fluidityLevelMed' : 35,
+                    			'fluidityLevelMax' : 65,
+                    			'fluidityNumFramesToEvent' : 5,
+                    			'sendOpticalFlowEvent' : false,
+                    			'opticalFlowNumFramesToEvent' : 3,
+                    			'opticalFlowNumFramesToReset' : 3,
+                    			'opticalFlowAngleOffset' : 0
+                			}
+			});
+		}	
+
+		pipeline.create('CrowdDetectorFilter', {'rois' : ps},
 				function(error, crowdDetector) {
 					if (error) {
 						return callback(error);
