@@ -1,0 +1,17 @@
+{
+    "apps" : [{
+        "name"        : "crowddetector",
+        "script"      : "server.js",
+        "args"        : ["--as_uri=http://130.206.81.33:8082", "--ws_uri=ws://130.206.81.33:8888/kurento"],
+        "log_date_format"  : "YYYY-MM-DD HH:mm Z",
+        "log_file" : "/var/log/crowddetector.log",
+        "error_file" : "/var/log/crowddetector-err.log",
+        "out_file"   : "/var/log/crowddetector-out.log",
+        "pid_file"   : "/var/run/crowddetector.pid",
+        "ignore_watch" : ["[\\/\\\\]\\./", "node_modules"],
+        "watch"       : true,
+        "cwd"         : "kurento-crowddetector",
+        "env": {
+        }
+    }]
+}
