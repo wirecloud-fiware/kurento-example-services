@@ -20,15 +20,16 @@ var ws = require('ws');
 var minimist = require('minimist');
 var url = require('url');
 var kurento = require('kurento-client');
+var fs = require('fs');
 
 var argv = minimist(process.argv.slice(2),
-{
-  default:
-  {
-    as_uri: "http://localhost:8080/",
-    ws_uri: "ws://localhost:8888/kurento"
-  }
-});
+                    {
+                        default:
+                        {
+                            as_uri: "http://localhost:8080/",
+                            ws_uri: "ws://localhost:8888/kurento"
+                        }
+                    });
 
 var app = express();
 
@@ -40,10 +41,10 @@ kurento.register(require('kurento-module-crowddetector'));
 app.use(express.cookieParser());
 
 var sessionHandler = session({
-	secret : 'none',
-	rolling : true,
-	resave : true,
-	saveUninitialized : true
+    secret : 'none',
+    rolling : true,
+    resave : true,
+    saveUninitialized : true
 });
 
 app.use(sessionHandler);
@@ -62,96 +63,111 @@ var kurentoClient = null;
 var asUrl = url.parse(argv.as_uri);
 var port = asUrl.port;
 var server = app.listen(port, function() {
-	console.log('Kurento Tutorial started');
-	console.log('Open ' + url.format(asUrl) + ' with a WebRTC capable browser');
+    console.log('Kurento Tutorial started');
+    console.log('Open ' + url.format(asUrl) + ' with a WebRTC capable browser');
 });
 
 var WebSocketServer = ws.Server, wss = new WebSocketServer({
-	server : server,
-	path : '/crowddetector'
+    server : server,
+    path : '/crowddetector'
 });
 
 /*
  * Management of WebSocket messages
  */
 wss.on('connection', function(ws) {
-	var sessionId = null;
-	var request = ws.upgradeReq;
-	var response = {
-		writeHead : {}
-	}; // black magic here
+    var sessionId = null;
+    var request = ws.upgradeReq;
+    var response = {
+	writeHead : {}
+    }; // black magic here
 
-	sessionHandler(request, response, function(err) {
-		sessionId = request.session.id;
-		console.log("Connection received with sessionId " + sessionId);
-	});
+    sessionHandler(request, response, function(err) {
+	sessionId = request.session.id;
+	console.log("Connection received with sessionId " + sessionId);
+    });
 
-	ws.on('error', function(error) {
-		console.log('Connection ' + sessionId + ' error');
-		stop(sessionId);
-	});
+    ws.on('error', function(error) {
+	console.log('Connection ' + sessionId + ' error');
+	stop(sessionId);
+    });
 
-	ws.on('close', function() {
-		console.log('Connection ' + sessionId + ' closed');
-		stop(sessionId);
-	});
+    ws.on('close', function() {
+	console.log('Connection ' + sessionId + ' closed');
+	stop(sessionId);
+    });
 
-	ws.on('message', function(_message) {
-		var message = JSON.parse(_message);
-		console.log('Connection ' + sessionId + ' received message ', message);
+    ws.on('message', function(_message) {
+	var message = JSON.parse(_message);
+	console.log('Connection ' + sessionId + ' received message ', message);
 
-		switch (message.id) {
-		case 'start':
-			start(sessionId, message.sdpOffer, message.dots, function(error, type, data) {
-				if (error) {
-					return ws.send(JSON.stringify({
-						id : 'error',
-						message : error.message || error,
-						data: error
-					}));
-				}
-				switch (type) {
-					case 'sdpAnswer': 
-						ws.send(JSON.stringify({
-							id : 'startResponse',
-							sdpAnswer : data
-						}));
-						break;
-					case 'crowdDetectorDirection': 
-						ws.send(JSON.stringify({
-							id : 'crowdDetectorDirection',
-							event_data : data
-						}));
-						break;
-					case 'crowdDetectorFluidity': 
-						ws.send(JSON.stringify({
-							id : 'crowdDetectorFluidity',
-							event_data : data
-						}));
-						break;
-					case 'crowdDetectorOccupancy': 
-						ws.send(JSON.stringify({
-							id : 'crowdDetectorOccupancy',
-							event_data : data
-						}));
-						break;	
-				}				
-			});
-			break;
-
-		case 'stop':
-			stop(sessionId);
-			break;
-
-		default:
-			ws.send(JSON.stringify({
-				id : 'error',
-				message : 'Invalid message ' + message
-			}));
-			break;
+	switch (message.id) {
+	case 'start':
+	    start(sessionId, message.sdpOffer, message.dots, function(error, type, data) {
+		if (error) {
+		    return ws.send(JSON.stringify({
+			id : 'error',
+			message : error.message || error,
+			data: error
+		    }));
 		}
+		switch (type) {
+		case 'sdpAnswer':
+		    ws.send(JSON.stringify({
+			id : 'startResponse',
+			sdpAnswer : data
+		    }));
+		    break;
+		case 'crowdDetectorDirection':
+		    ws.send(JSON.stringify({
+			id : 'crowdDetectorDirection',
+			event_data : data
+		    }));
+		    break;
+		case 'crowdDetectorFluidity':
+		    ws.send(JSON.stringify({
+			id : 'crowdDetectorFluidity',
+			event_data : data
+		    }));
+		    break;
+		case 'crowdDetectorOccupancy':
+		    ws.send(JSON.stringify({
+			id : 'crowdDetectorOccupancy',
+			event_data : data
+		    }));
+		    break;
+		}
+	    });
+	    break;
+        case 'getVideo':
+            getVideo(sessionId, message.url, message.filter, message.dots, message.sdpOffer, function(error, sdpAnswer) {
+                if (error) {
+                    return ws.send(JSON.stringify({
+                        id : 'getVideo',
+                        response : "can't send it",
+                        message : error
+                    }));
+                }
+                return ws.send(JSON.stringify({
+                    id : 'getVideo',
+                    response : 'accepted',
+                    sdpAnswer : sdpAnswer
+                }));
+            });
+            break;
+	case 'stop':
+	    stop(sessionId);
+	    break;
 
-	});
+	default:
+	    ws.send(JSON.stringify({
+		id : 'error',
+		message : 'Invalid message ' + message
+	    }));
+	    break;
+	}
+
+    });
 });
 
 /*
@@ -160,146 +176,235 @@ wss.on('connection', function(ws) {
 
 // Recover kurentoClient for the first time.
 function getKurentoClient(callback) {
-	if (kurentoClient !== null) {
-		return callback(null, kurentoClient);
+    if (kurentoClient !== null) {
+	return callback(null, kurentoClient);
+    }
+
+    kurento(argv.ws_uri, function(error, _kurentoClient) {
+	if (error) {
+	    console.log("Could not find media server at address " + argv.ws_uri);
+	    return callback("Could not find media server at address" + argv.ws_uri
+			    + ". Exiting with error " + error);
 	}
 
-	kurento(argv.ws_uri, function(error, _kurentoClient) {
-		if (error) {
-			console.log("Could not find media server at address " + argv.ws_uri);
-			return callback("Could not find media server at address" + argv.ws_uri
-					+ ". Exiting with error " + error);
-		}
-
-		kurentoClient = _kurentoClient;
-		callback(null, kurentoClient);
-	});
+	kurentoClient = _kurentoClient;
+	callback(null, kurentoClient);
+    });
 }
+
+function parse_url (url_path) {
+    var parsed = url.parse(url_path);
+    var final_path = "";
+    if (parsed.protocol) {
+        final_path = url_path;
+    } else {
+        var abs_path = path.resolve(__dirname, url_path);
+        try {
+            fs.openSync(abs_path, 'r');
+            final_path = 'file://' + abs_path;
+        } catch (err) {
+            console.log("Can't read the file " + abs_path);
+        }
+    }
+    return final_path;
+}
+
+function getVideo(sessionId, url_path, filt, dots, sdpOffer, callback) {
+    var last_url = "";
+    var abs_path = parse_url(url_path);
+    if (!abs_path) {
+        return callback("File %s not found." % url_path);
+    }
+    if (!sessionId) {
+        return callback("Cannot use undefined sessionId");
+    }
+    if (pipelines[sessionId]) {
+        return callback("Session used");
+    }
+    getKurentoClient(function(error, kurentoClient) {
+        if (error) {
+            return callback(error);
+        }
+        kurentoClient.create('MediaPipeline', function(error, pipeline) {
+            if (error) return callback(error);
+            function release() {
+                pipeline.release();
+            }
+            pipeline.create("WebRtcEndpoint", function(error, webRtcEndpoint) {
+                if (error) return callback(error);
+                pipeline.create("PlayerEndpoint", {uri: abs_path}, function(error, playerEndpoint) {
+                    if (error) return callback(error);
+                    if (filt) { // If want to do a filter
+                        var ps = create_rois(dots);
+                        pipeline.create('CrowdDetectorFilter', {'rois': ps}, function (error, crowdDetector) {
+                            if (error) return callback(error);
+                            playerEndpoint.connect(crowdDetector, function(error) {
+                                if (error) return callback(error);
+                                crowdDetector.connect(webRtcEndpoint, function(error) {
+                                    if (error) return callback(error);
+                                    webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
+                                        if (error) {
+                                            release();
+                                            return callback(error);
+                                        }
+                                        playerEndpoint.on('EndOfStream', playerEndpoint.play);
+                                        playerEndpoint.play();
+                                        pipelines[sessionId] = pipeline;
+                                        return callback(null, sdpAnswer);
+                                    });
+                                });
+                            });
+                        });
+                    } else { // Only player
+                        playerEndpoint.connect(webRtcEndpoint, function(error) {
+                            if (error) return callback(error);
+                            webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
+                                if (error) {
+                                    release();
+                                    return callback(error);
+                                }
+                                playerEndpoint.on('EndOfStream', playerEndpoint.play);
+                                playerEndpoint.play();
+                                pipelines[sessionId] = pipeline;
+                                return callback(null, sdpAnswer);
+                            });
+                        });
+                    }
+                });
+            });
+        });
+    });
+};
+
+var create_rois = function (dots) {
+    var ps = [];
+    for(var i=0; i<dots.length; i++){
+        ps.push({
+            'id': 'roi'+(i+1),
+            'points':dots[i],
+            'regionOfInterestConfig' : {
+                'occupancyLevelMin' : 10,
+                'occupancyLevelMed' : 35,
+                'occupancyLevelMax' : 65,
+                'occupancyNumFramesToEvent' : 5,
+                'fluidityLevelMin' : 10,
+                'fluidityLevelMed' : 35,
+                'fluidityLevelMax' : 65,
+                'fluidityNumFramesToEvent' : 5,
+                'sendOpticalFlowEvent' : false,
+                'opticalFlowNumFramesToEvent' : 3,
+                'opticalFlowNumFramesToReset' : 3,
+                'opticalFlowAngleOffset' : 0
+            }
+        });
+    }
+    return ps;
+};
+
 
 function start(sessionId, sdpOffer, dots, callback) {
 
-	if (!sessionId) {
-		return callback("Cannot use undefined sessionId");
+    if (!sessionId) {
+	return callback("Cannot use undefined sessionId");
+    }
+
+    // Check if session is already transmitting
+    if (pipelines[sessionId]) {
+	return callback("Close current session before starting a new one or use another browser to open a tutorial.")
+    }
+
+    getKurentoClient(function(error, kurentoClient) {
+	if (error) {
+	    return callback(error);
 	}
 
-	// Check if session is already transmitting
-	if (pipelines[sessionId]) {
-		return callback("Close current session before starting a new one or use another browser to open a tutorial.")
-	}
+	kurentoClient.create('MediaPipeline', function(error, pipeline) {
+	    if (error) {
+		return callback(error);
+	    }
 
-	getKurentoClient(function(error, kurentoClient) {
+	    createMediaElements(pipeline, dots, function(error, webRtcEndpoint, crowdDetector) {
 		if (error) {
-			return callback(error);
+		    pipeline.release();
+		    return callback(error);
 		}
 
-		kurentoClient.create('MediaPipeline', function(error, pipeline) {
-			if (error) {
-				return callback(error);
-			}
+		connectMediaElements(webRtcEndpoint, crowdDetector,
+				     function(error) {
+					 if (error) {
+					     pipeline.release();
+					     return callback(error);
+					 }
 
-			createMediaElements(pipeline, dots, function(error, webRtcEndpoint,
-					crowdDetector) {
-				if (error) {
-					pipeline.release();
-					return callback(error);
-				}
+					 crowdDetector.on ('CrowdDetectorDirection', function (_data){
+					     return callback(null, 'crowdDetectorDirection', _data);
+					 });
 
-				connectMediaElements(webRtcEndpoint, crowdDetector,
-					function(error) {
-						if (error) {
-							pipeline.release();
-							return callback(error);
-						}
+					 crowdDetector.on ('CrowdDetectorFluidity', function (_data){
+					     return callback(null, 'crowdDetectorFluidity', _data);
+					 });
 
-						crowdDetector.on ('CrowdDetectorDirection', function (_data){
-							return callback(null, 'crowdDetectorDirection', _data);
-						});
+					 crowdDetector.on ('CrowdDetectorOccupancy', function (_data){
+					     return callback(null, 'crowdDetectorOccupancy', _data);
+					 });
 
-						crowdDetector.on ('CrowdDetectorFluidity', function (_data){
-							return callback(null, 'crowdDetectorFluidity', _data);
-						});
+					 webRtcEndpoint.processOffer(sdpOffer, function(
+					     error, sdpAnswer) {
+					     if (error) {
+						 pipeline.release();
+						 return callback(error);
+					     }
 
-						crowdDetector.on ('CrowdDetectorOccupancy', function (_data){
-							return callback(null, 'crowdDetectorOccupancy', _data);
-						});
-
-						webRtcEndpoint.processOffer(sdpOffer, function(
-								error, sdpAnswer) {
-							if (error) {
-								pipeline.release();
-								return callback(error);
-							}
-
-							pipelines[sessionId] = pipeline;
-							return callback(null, 'sdpAnswer', sdpAnswer);
-						});
-					});
-			});
-		});
+					     pipelines[sessionId] = pipeline;
+					     return callback(null, 'sdpAnswer', sdpAnswer);
+					 });
+				     });
+	    });
 	});
+    });
 }
 
 function createMediaElements(pipeline, dots, callback) {
-	pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
-		if (error) {
-			return callback(error);
-		}
+    pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
+	if (error) {
+	    return callback(error);
+	}
 
-		var ps = [];
-		for(var i=0; i<dots.length; i++){
-			ps.push({
-				'id': 'roi'+(i+1),
-				'points':dots[i],
-              			'regionOfInterestConfig' : {
-                    			'occupancyLevelMin' : 10,
-                    			'occupancyLevelMed' : 35,
-                    			'occupancyLevelMax' : 65,
-					'occupancyNumFramesToEvent' : 5,
-					'fluidityLevelMin' : 10,
-			                'fluidityLevelMed' : 35,
-                    			'fluidityLevelMax' : 65,
-                    			'fluidityNumFramesToEvent' : 5,
-                    			'sendOpticalFlowEvent' : false,
-                    			'opticalFlowNumFramesToEvent' : 3,
-                    			'opticalFlowNumFramesToReset' : 3,
-                    			'opticalFlowAngleOffset' : 0
-                			}
+        var ps = create_rois(dots);
+
+	pipeline.create('CrowdDetectorFilter', {'rois' : ps},
+			function(error, crowdDetector) {
+			    if (error) {
+				return callback(error);
+			    }
+			    return callback(null, webRtcEndpoint,
+					    crowdDetector);
 			});
-		}	
-
-		pipeline.create('CrowdDetectorFilter', {'rois' : ps},
-				function(error, crowdDetector) {
-					if (error) {
-						return callback(error);
-					}
-					return callback(null, webRtcEndpoint,
-										crowdDetector);
-				});
-	});
+    });
 }
 
 function connectMediaElements(webRtcEndpoint, crowdDetector, callback) {
-	webRtcEndpoint.connect(crowdDetector, function(error) {
-		if (error) {
-			return callback(error);
-		}
+    webRtcEndpoint.connect(crowdDetector, function(error) {
+	if (error) {
+	    return callback(error);
+	}
 
-		crowdDetector.connect(webRtcEndpoint, function(error) {
-			if (error) {
-				return callback(error);
-			}
+	crowdDetector.connect(webRtcEndpoint, function(error) {
+	    if (error) {
+		return callback(error);
+	    }
 
-			return callback(null);
-		});
+	    return callback(null);
 	});
+    });
 }
 
 function stop(sessionId) {
-	if (pipelines[sessionId]) {
-		var pipeline = pipelines[sessionId];
-		pipeline.release();
-		delete pipelines[sessionId];
-	}
+    if (pipelines[sessionId]) {
+	var pipeline = pipelines[sessionId];
+	pipeline.release();
+	delete pipelines[sessionId];
+    }
 }
 
 app.use(express.static(path.join(__dirname, 'static')));
