@@ -15,12 +15,13 @@
 
 var path = require('path');
 var express = require('express');
-var session = require('express-session')
+var session = require('express-session');
 var ws = require('ws');
 var minimist = require('minimist');
 var url = require('url');
 var kurento = require('kurento-client');
 var fs = require('fs');
+var pathIsInside = require('path-is-inside');
 
 var argv = minimist(process.argv.slice(2),
                     {
@@ -62,10 +63,37 @@ var kurentoClient = null;
 
 var asUrl = url.parse(argv.as_uri);
 var port = asUrl.port;
-var server = app.listen(port, function() {
+
+var cfg = {
+    ssl: false,
+    port: port,
+    ssl_key: 'certs/server.key',
+    ssl_cert: 'certs/server.crt'
+};
+
+var httpServ = ( cfg.ssl ) ? require('https') : require('http');
+
+var server = null;
+
+if (cfg.ssl) {
+    server = httpServ.createServer({
+        // providing server with  SSL key/cert
+        key: fs.readFileSync( cfg.ssl_key ),
+        cert: fs.readFileSync( cfg.ssl_cert )
+    }, app);
+} else {
+    server = httpServ.createServer(app);
+}
+
+server.listen(port, function() {
     console.log('Kurento Tutorial started');
     console.log('Open ' + url.format(asUrl) + ' with a WebRTC capable browser');
 });
+
+// server = app.listen(port, function() {
+//     console.log('Kurento Tutorial started');
+//     console.log('Open ' + url.format(asUrl) + ' with a WebRTC capable browser');
+// });
 
 var WebSocketServer = ws.Server, wss = new WebSocketServer({
     server : server,
@@ -140,19 +168,51 @@ wss.on('connection', function(ws) {
 	    });
 	    break;
         case 'getVideo':
-            getVideo(sessionId, message.url, message.filter, message.dots, message.sdpOffer, function(error, sdpAnswer) {
+            getVideo(sessionId, message.url, message.filter, message.dots, message.sdpOffer, function(error, sdpAnswer, type) {
                 if (error) {
-                    return ws.send(JSON.stringify({
+                    ws.send(JSON.stringify({
                         id : 'getVideo',
                         response : "can't send it",
                         message : error
                     }));
+                } else {
+                    switch(type) {
+                    case 'video':
+                        ws.send(JSON.stringify({
+                            id : 'getVideo',
+                            response : 'accepted',
+                            filter: false,
+                            sdpAnswer : sdpAnswer
+                        }));
+                        break;
+                    case 'videoFilter':
+                        ws.send(JSON.stringify({
+                            id : 'getVideo',
+                            response : 'accepted',
+                            filter: true,
+                            sdpAnswer : sdpAnswer
+                        }));
+
+                    case 'crowdDetectorDirection':
+                        ws.send(JSON.stringify({
+                            id : 'crowdDetectorDirection',
+                            event_data : sdpAnswer
+                        }));
+                        break;
+                    case 'crowdDetectorFluidity':
+                        ws.send(JSON.stringify({
+                            id : 'crowdDetectorFluidity',
+                            event_data : sdpAnswer
+                        }));
+                        break;
+                    case 'crowdDetectorOccupancy':
+                        ws.send(JSON.stringify({
+                            id : 'crowdDetectorOccupancy',
+                            event_data : sdpAnswer
+                        }));
+                        break;
+                    }
                 }
-                return ws.send(JSON.stringify({
-                    id : 'getVideo',
-                    response : 'accepted',
-                    sdpAnswer : sdpAnswer
-                }));
             });
             break;
 	case 'stop':
@@ -166,7 +226,6 @@ wss.on('connection', function(ws) {
 	    }));
 	    break;
 	}
-
     });
 });
 
@@ -196,24 +255,33 @@ function parse_url (url_path) {
     var parsed = url.parse(url_path);
     var final_path = "";
     if (parsed.protocol) {
-        final_path = url_path;
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https://') {
+            final_path = url_path;
+        } else {
+            console.log("Can't resolve an absolute path.");
+        }
     } else {
         var abs_path = path.resolve(__dirname, url_path);
-        try {
-            fs.openSync(abs_path, 'r');
-            final_path = 'file://' + abs_path;
-        } catch (err) {
-            console.log("Can't read the file " + abs_path);
+        if (!pathIsInside(abs_path, __dirname)) {
+            console.log("Tried to access other path.");
+        } else {
+            try {
+                fs.openSync(abs_path, 'r');
+                final_path = 'file://' + abs_path;
+            } catch (err) {
+                console.log("Can't read the file " + abs_path);
+                final_path = "";
+            }
         }
     }
     return final_path;
 }
 
-function getVideo(sessionId, url_path, filt, dots, sdpOffer, callback) {
+function getVideo (sessionId, url_path, filt, dots, sdpOffer, callback) {
     var last_url = "";
     var abs_path = parse_url(url_path);
-    if (!abs_path) {
-        return callback("File %s not found." % url_path);
+    if (abs_path === "") {
+        return callback("File "+ url_path + " not found or can't resolve.");
     }
     if (!sessionId) {
         return callback("Cannot use undefined sessionId");
@@ -232,14 +300,29 @@ function getVideo(sessionId, url_path, filt, dots, sdpOffer, callback) {
             }
             pipeline.create("WebRtcEndpoint", function(error, webRtcEndpoint) {
                 if (error) return callback(error);
+                //webRtcEndpoint.setMaxVideoSendBandwidth(2000000);
+                //webRtcEndpoint.setMinVideoSendBandwidth(2000000);
                 pipeline.create("PlayerEndpoint", {uri: abs_path}, function(error, playerEndpoint) {
                     if (error) return callback(error);
                     if (filt) { // If want to do a filter
                         var ps = create_rois(dots);
                         pipeline.create('CrowdDetectorFilter', {'rois': ps}, function (error, crowdDetector) {
                             if (error) return callback(error);
-                            playerEndpoint.connect(crowdDetector, function(error) {
+                            playerEndpoint.connect(crowdDetector, 'VIDEO', function(error) {
                                 if (error) return callback(error);
+
+                                crowdDetector.on ('CrowdDetectorDirection', function (_data){
+                                    return callback(null, _data, 'crowdDetectorDirection');
+                                });
+
+                                crowdDetector.on ('CrowdDetectorFluidity', function (_data){
+                                    return callback(null, _data, 'crowdDetectorFluidity');
+                                });
+
+                                crowdDetector.on ('CrowdDetectorOccupancy', function (_data){
+                                    return callback(null, _data, 'crowdDetectorOccupancy');
+                                });
+
                                 crowdDetector.connect(webRtcEndpoint, function(error) {
                                     if (error) return callback(error);
                                     webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
@@ -247,10 +330,12 @@ function getVideo(sessionId, url_path, filt, dots, sdpOffer, callback) {
                                             release();
                                             return callback(error);
                                         }
-                                        playerEndpoint.on('EndOfStream', playerEndpoint.play);
+                                        playerEndpoint.on('EndOfStream', function() {
+                                            playerEndpoint.play();
+                                        });
                                         playerEndpoint.play();
                                         pipelines[sessionId] = pipeline;
-                                        return callback(null, sdpAnswer);
+                                        return callback(null, sdpAnswer, 'videoFilter');
                                     });
                                 });
                             });
@@ -258,15 +343,20 @@ function getVideo(sessionId, url_path, filt, dots, sdpOffer, callback) {
                     } else { // Only player
                         playerEndpoint.connect(webRtcEndpoint, function(error) {
                             if (error) return callback(error);
+                            // sdpOffer = sdpOffer.replace( /b=AS([^\r\n]+\r\n)/g , '');
+                            // sdpOffer = sdpOffer.replace( /a=mid:video\r\n/g , 'a=mid:video\r\nb=AS:1638400\r\n');
+                            // console.log(sdpOffer);
                             webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
                                 if (error) {
                                     release();
                                     return callback(error);
                                 }
-                                playerEndpoint.on('EndOfStream', playerEndpoint.play);
+                                playerEndpoint.on('EndOfStream', function() {
+                                    playerEndpoint.play();
+                                });
                                 playerEndpoint.play();
                                 pipelines[sessionId] = pipeline;
-                                return callback(null, sdpAnswer);
+                                return callback(null, sdpAnswer, 'video');
                             });
                         });
                     }
@@ -286,16 +376,30 @@ var create_rois = function (dots) {
                 'occupancyLevelMin' : 10,
                 'occupancyLevelMed' : 35,
                 'occupancyLevelMax' : 65,
-                'occupancyNumFramesToEvent' : 5,
+                'occupancyNumFramesToEvent' : 2,
                 'fluidityLevelMin' : 10,
                 'fluidityLevelMed' : 35,
                 'fluidityLevelMax' : 65,
-                'fluidityNumFramesToEvent' : 5,
+                'fluidityNumFramesToEvent' : 2,
                 'sendOpticalFlowEvent' : false,
                 'opticalFlowNumFramesToEvent' : 3,
                 'opticalFlowNumFramesToReset' : 3,
                 'opticalFlowAngleOffset' : 0
             }
+            // 'regionOfInterestConfig' : {
+            //     'occupancyLevelMin' : 10,
+            //     'occupancyLevelMed' : 35,
+            //     'occupancyLevelMax' : 65,
+            //     'occupancyNumFramesToEvent' : 5,
+            //     'fluidityLevelMin' : 10,
+            //     'fluidityLevelMed' : 35,
+            //     'fluidityLevelMax' : 65,
+            //     'fluidityNumFramesToEvent' : 5,
+            //     'sendOpticalFlowEvent' : false,
+            //     'opticalFlowNumFramesToEvent' : 3,
+            //     'opticalFlowNumFramesToReset' : 3,
+            //     'opticalFlowAngleOffset' : 0
+            // }
         });
     }
     return ps;
